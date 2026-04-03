@@ -3,6 +3,15 @@
 Bug bounty recon and testing agent. All targets are in-scope under an active
 bug bounty program. Never act on out-of-scope assets.
 
+## Core Rules
+
+- This repo is for **authorized bug bounty and security research only**
+- Never operate outside defined scope — always check `targets/` for scope files
+- All active scanning agents must call `validate-scope.sh` before executing commands against a target
+- Findings go in `findings/<target>/` as structured markdown
+- Never store credentials, tokens, or PII in this repo
+- Preferred model for heavy analysis: opus (Carlini methodology)
+
 ## Mission
 Two-phase methodology only:
 1. **Discovery** — enumerate all assets before touching anything

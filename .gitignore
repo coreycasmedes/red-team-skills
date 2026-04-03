@@ -1,1 +1,8 @@
 runs/
+targets/
+findings/
+.claude/agent-memory/
+.env
+*.key
+*.pem
+node_modules/
