@@ -16,7 +16,7 @@ import sys
 import requests
 
 CHARSET = "abcdefghijklmnopqrstuvwxyz0123456789"
-MAX_POSITIONS = 20
+MAX_POSITIONS = 30
 PATH = "/filter?category=Gifts"
 
 # Per-dialect substring function
